@@ -161,8 +161,7 @@ async function placeOrder(req: IncomingMessage, res: ServerResponse, ctx: Ctx, c
 
 async function cancelOrder(res: ServerResponse, ctx: Ctx, customer: Customer, orderId: string): Promise<number> {
   const existing = await fetchOwnedOrder(ctx, customer, orderId);
-  const owner = ownerService(orderId);
-  const { value } = await callOwner<OrderSummary>(ctx, owner, "POST", `/v1/orders/${encodeURIComponent(orderId)}/cancel`);
+  const { value } = await downstream.request<OrderSummary>(ctx.requestId, "orders", "POST", `/v1/orders/${encodeURIComponent(orderId)}/cancel`);
   stats.orders_cancelled++;
   log("INFO", "order cancelled", {
     order_id: orderId,
@@ -174,29 +173,12 @@ async function cancelOrder(res: ServerResponse, ctx: Ctx, customer: Customer, or
 }
 
 async function fetchOwnedOrder(ctx: Ctx, customer: Customer, orderId: string): Promise<OrderSummary> {
-  const { value } = await callOwner<OrderSummary>(ctx, ownerService(orderId), "GET", `/v1/orders/${encodeURIComponent(orderId)}`);
-  if (value.customer_id !== customer.id) {
+  const { value } = await downstream.request<OrderSummary>(ctx.requestId, "orders", "GET", `/v1/orders/${encodeURIComponent(orderId)}`);
+  if (typeof value.customer_id === "string" && value.customer_id !== "" && value.customer_id !== customer.id) {
     log("WARN", "order belongs to another customer", { order_id: orderId, customer_id: customer.id, request_id: ctx.requestId });
     throw new HttpError(404, "not_found", `order ${orderId} not found`);
   }
   return value;
-}
-
-async function callOwner<T>(ctx: Ctx, service: string, method: Method, path: string) {
-  try {
-    return await downstream.request<T>(ctx.requestId, service, method, path);
-  } catch (err) {
-    if (err instanceof CallError && isObject(err.body) && err.body.no_instance === true) {
-      throw new HttpError(404, "not_found", `order not found: ${service} is no longer registered`);
-    }
-    throw err;
-  }
-}
-
-function ownerService(orderId: string): string {
-  const dot = orderId.lastIndexOf(".");
-  if (dot <= 0) throw new HttpError(404, "not_found", `order ${orderId} not found`);
-  return `orders/${orderId.slice(0, dot)}`;
 }
 
 async function forward(res: ServerResponse, ctx: Ctx, service: string, method: Method, path: string): Promise<number> {

@@ -1,4 +1,5 @@
 FROM node:24-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /app
 COPY package.json package-lock.json ./

@@ -43,11 +43,6 @@ record Identity(
         return sb.toString();
     }
 
-    static String owner(String resourceId) {
-        int dot = resourceId.lastIndexOf('.');
-        return dot <= 0 ? null : resourceId.substring(0, dot);
-    }
-
     Map<String, Object> hop(long startNanos) {
         Map<String, Object> hop = new LinkedHashMap<>();
         hop.put("service", service);

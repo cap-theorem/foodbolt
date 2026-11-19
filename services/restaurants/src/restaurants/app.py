@@ -15,7 +15,7 @@ from spectral_sdk import Client
 from restaurants import catalog, logs
 from restaurants.downstream import CallError, Downstream
 from restaurants.identity import Identity, start_registration
-from restaurants.kitchen import Kitchen
+from restaurants.kitchen import Kitchen, now_rfc3339
 
 ident = Identity.from_env("restaurants", "rst", 8082)
 spectral = Client()
@@ -31,6 +31,7 @@ stats = {
     "quotes": 0,
     "quotes_rejected": 0,
     "tickets_created": 0,
+    "synthetic_tickets": 0,
 }
 
 
@@ -214,8 +215,6 @@ def create_ticket(req: TicketRequest, x_request_id: str | None = Header(default=
         return error(409, f"{restaurant.name} is closed")
     if not req.lines:
         return error(422, "lines must not be empty")
-    if "." not in req.order_id:
-        return error(422, f"order_id {req.order_id} has no owning instance")
 
     lines = []
     for line in req.lines:
@@ -246,20 +245,43 @@ def create_ticket(req: TicketRequest, x_request_id: str | None = Header(default=
     }
 
 
+def synthetic_ticket(ticket_id: str, status: str) -> dict:
+    return {
+        "ticket_id": ticket_id,
+        "order_id": "",
+        "restaurant_id": "",
+        "status": status,
+        "lines": [],
+        "created_at": now_rfc3339(),
+    }
+
+
 @app.get("/v1/tickets/{ticket_id}")
-def get_ticket(ticket_id: str):
+def get_ticket(ticket_id: str, x_request_id: str | None = Header(default=None)):
+    start = time.perf_counter()
     ticket = kitchen.get(ticket_id)
     if ticket is None:
-        return error(404, f"unknown ticket {ticket_id}")
-    return ticket.to_json()
+        bump("synthetic_tickets")
+        logs.info("ticket not held here, returning synthetic", ticket_id=ticket_id, status="accepted", request_id=x_request_id)
+        body = synthetic_ticket(ticket_id, "accepted")
+    else:
+        body = ticket.to_json()
+    body["hops"] = [ident.hop(start)]
+    return body
 
 
 @app.post("/v1/tickets/{ticket_id}/cancel")
-def cancel_ticket(ticket_id: str):
+def cancel_ticket(ticket_id: str, x_request_id: str | None = Header(default=None)):
+    start = time.perf_counter()
     ticket = kitchen.cancel(ticket_id)
     if ticket is None:
-        return error(404, f"unknown ticket {ticket_id}")
-    return ticket.to_json()
+        bump("synthetic_tickets")
+        logs.info("ticket not held here, returning synthetic", ticket_id=ticket_id, status="cancelled", request_id=x_request_id)
+        body = synthetic_ticket(ticket_id, "cancelled")
+    else:
+        body = ticket.to_json()
+    body["hops"] = [ident.hop(start)]
+    return body
 
 
 @app.get("/v1/stats")

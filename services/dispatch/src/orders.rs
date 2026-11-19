@@ -2,13 +2,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use spectral_sdk::Error as SpectralError;
+use spectral_sdk::{Error as SpectralError, Provider};
 
 use crate::App;
-use crate::identity::owner_of;
 use crate::log;
 
 const ATTEMPTS: u32 = 3;
+const SERVICE: &str = "orders";
 
 #[derive(Serialize)]
 struct EventBody<'a> {
@@ -24,11 +24,7 @@ enum Outcome {
 }
 
 pub async fn post_event(app: Arc<App>, order_id: String, request_id: String, event: &'static str, detail: String) {
-    let Some(owner) = owner_of(&order_id).map(str::to_string) else {
-        log::warn("cannot route order event", &[("order_id", order_id), ("event", event.to_string())]);
-        return;
-    };
-    let service = format!("orders/{owner}");
+    let service = SERVICE.to_string();
 
     for attempt in 1..=ATTEMPTS {
         let call_app = app.clone();
@@ -83,10 +79,22 @@ fn send(app: &App, service: &str, order_id: &str, request_id: &str, event: &str,
     let provider = match app.spectral.lookup(service) {
         Ok(provider) => provider,
         Err(SpectralError::ServiceNotFound(_)) => {
-            return Outcome::Stop(format!("{service} not found, owner instance is gone"));
+            log::warn("lookup failed", &[("service", service.to_string()), ("request_id", request_id.to_string())]);
+            return Outcome::Retry(format!("{service} not found"));
         }
-        Err(err) => return Outcome::Retry(format!("lookup {service}: {err}")),
+        Err(err) => {
+            log::warn(
+                "lookup failed",
+                &[
+                    ("service", service.to_string()),
+                    ("error", err.to_string()),
+                    ("request_id", request_id.to_string()),
+                ],
+            );
+            return Outcome::Retry(format!("lookup {service}: {err}"));
+        }
     };
+    let instance = provider_instance(&provider);
 
     let path = format!("/v1/orders/{order_id}/events");
     let start = Instant::now();
@@ -108,7 +116,7 @@ fn send(app: &App, service: &str, order_id: &str, request_id: &str, event: &str,
                 "call",
                 &[
                     ("service", service.to_string()),
-                    ("instance", provider.instance_id.clone()),
+                    ("instance", instance.clone()),
                     ("method", "POST".to_string()),
                     ("path", path),
                     ("status", status.to_string()),
@@ -127,7 +135,7 @@ fn send(app: &App, service: &str, order_id: &str, request_id: &str, event: &str,
                 "call failed",
                 &[
                     ("service", service.to_string()),
-                    ("instance", provider.instance_id.clone()),
+                    ("instance", instance.clone()),
                     ("method", "POST".to_string()),
                     ("path", path),
                     ("ms", ms),
@@ -138,4 +146,19 @@ fn send(app: &App, service: &str, order_id: &str, request_id: &str, event: &str,
             Outcome::Retry(err.to_string())
         }
     }
+}
+
+fn provider_instance(provider: &Provider) -> String {
+    if !provider.instance_id.is_empty() {
+        return provider.instance_id.clone();
+    }
+    let without_scheme = match provider.endpoint.find("://") {
+        Some(i) => &provider.endpoint[i + 3..],
+        None => provider.endpoint.as_str(),
+    };
+    let host = match without_scheme.find('/') {
+        Some(i) => &without_scheme[..i],
+        None => without_scheme,
+    };
+    host.to_string()
 }

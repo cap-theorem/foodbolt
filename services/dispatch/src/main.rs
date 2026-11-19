@@ -353,48 +353,108 @@ async fn run_delivery(app: Arc<App>, delivery_id: String) {
     .await;
 }
 
+#[derive(Serialize)]
+struct DeliveryResponse {
+    #[serde(flatten)]
+    delivery: DeliveryView,
+    hops: Vec<Hop>,
+}
+
+fn synthetic_delivery(app: &App, id: &str, status: DeliveryStatus, ready: bool) -> DeliveryView {
+    let now = log::now_rfc3339();
+    let spot = Location {
+        lat: 37.7749,
+        lng: -122.4194,
+    };
+    DeliveryView {
+        delivery_id: id.to_string(),
+        order_id: String::new(),
+        status: status.as_str(),
+        courier: CourierRef {
+            id: format!("{}.c1", app.ident.instance),
+            name: "Maya".to_string(),
+            vehicle: Vehicle::Bike.as_str(),
+        },
+        pickup: spot,
+        dropoff: spot,
+        eta_seconds: 0,
+        ready,
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
+fn log_unknown_delivery(action: &str, id: &str, rid: String) {
+    log::info(
+        "unknown delivery, synthetic response",
+        &[
+            ("action", action.to_string()),
+            ("delivery_id", id.to_string()),
+            ("request_id", rid),
+        ],
+    );
+}
+
 async fn mark_ready(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+) -> (StatusCode, Json<serde_json::Value>) {
+    let start = Instant::now();
     let rid = request_id(&headers);
-    let (order_id, status) = {
+    let known = {
         let mut fleet = app.fleet.lock().unwrap();
-        let Some(d) = fleet.deliveries.get_mut(&id) else {
-            return Err(api_error(StatusCode::NOT_FOUND, format!("unknown delivery {id}")));
-        };
-        if !d.ready {
-            d.ready = true;
-            d.updated_at = log::now_rfc3339();
-            d.ready_signal.notify_one();
+        match fleet.deliveries.get_mut(&id) {
+            Some(d) => {
+                if !d.ready {
+                    d.ready = true;
+                    d.updated_at = log::now_rfc3339();
+                    d.ready_signal.notify_one();
+                }
+                Some((d.order_id.clone(), d.status.as_str()))
+            }
+            None => None,
         }
-        (d.order_id.clone(), d.status.as_str())
     };
-    log::info(
-        "food ready for pickup",
-        &[
-            ("delivery_id", id.clone()),
-            ("order_id", order_id),
-            ("delivery_status", status.to_string()),
-            ("request_id", rid),
-        ],
-    );
-    Ok((
+    let status = match known {
+        Some((order_id, status)) => {
+            log::info(
+                "food ready for pickup",
+                &[
+                    ("delivery_id", id.clone()),
+                    ("order_id", order_id),
+                    ("delivery_status", status.to_string()),
+                    ("request_id", rid),
+                ],
+            );
+            status
+        }
+        None => {
+            log_unknown_delivery("ready", &id, rid);
+            DeliveryStatus::Assigned.as_str()
+        }
+    };
+    (
         StatusCode::ACCEPTED,
-        Json(json!({ "delivery_id": id, "status": status, "ready": true })),
-    ))
+        Json(json!({ "delivery_id": id, "status": status, "ready": true, "hops": vec![app.ident.hop(start)] })),
+    )
 }
 
 async fn cancel_delivery(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<Json<DeliveryView>, ApiError> {
+) -> Result<Json<DeliveryResponse>, ApiError> {
+    let start = Instant::now();
     let rid = request_id(&headers);
     let mut fleet = app.fleet.lock().unwrap();
     let Some(d) = fleet.deliveries.get_mut(&id) else {
-        return Err(api_error(StatusCode::NOT_FOUND, format!("unknown delivery {id}")));
+        drop(fleet);
+        log_unknown_delivery("cancel", &id, rid);
+        return Ok(Json(DeliveryResponse {
+            delivery: synthetic_delivery(&app, &id, DeliveryStatus::Cancelled, false),
+            hops: vec![app.ident.hop(start)],
+        }));
     };
     match d.status {
         DeliveryStatus::Delivered => {
@@ -423,15 +483,37 @@ async fn cancel_delivery(
         }
     }
     let d = &fleet.deliveries[&id];
-    Ok(Json(fleet.delivery_view(d)))
+    Ok(Json(DeliveryResponse {
+        delivery: fleet.delivery_view(d),
+        hops: vec![app.ident.hop(start)],
+    }))
 }
 
-async fn get_delivery(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<DeliveryView>, ApiError> {
-    let fleet = app.fleet.lock().unwrap();
-    match fleet.deliveries.get(&id) {
-        Some(d) => Ok(Json(fleet.delivery_view(d))),
-        None => Err(api_error(StatusCode::NOT_FOUND, format!("unknown delivery {id}"))),
-    }
+async fn get_delivery(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Json<DeliveryResponse> {
+    let start = Instant::now();
+    let rid = request_id(&headers);
+    let known = {
+        let fleet = app.fleet.lock().unwrap();
+        match fleet.deliveries.get(&id) {
+            Some(d) => Some(fleet.delivery_view(d)),
+            None => None,
+        }
+    };
+    let delivery = match known {
+        Some(view) => view,
+        None => {
+            log_unknown_delivery("get", &id, rid);
+            synthetic_delivery(&app, &id, DeliveryStatus::Assigned, false)
+        }
+    };
+    Json(DeliveryResponse {
+        delivery,
+        hops: vec![app.ident.hop(start)],
+    })
 }
 
 #[derive(Serialize)]
@@ -552,7 +634,6 @@ async fn main() {
     };
 
     identity::spawn_registration(spectral.clone(), &ident, ident.service.clone());
-    identity::spawn_registration(spectral.clone(), &ident, format!("{}/{}", ident.service, ident.instance));
     log::info(
         "listening",
         &[

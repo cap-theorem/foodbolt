@@ -610,7 +610,7 @@ dependencies = [
 [[package]]
 name = "spectral-sdk"
 version = "0.1.0"
-source = "git+https://github.com/cap-theorem/spectral-rs?branch=main#020ff8ab0e317dea9f7ae0d2630eb4affba33bef"
+source = "git+https://github.com/cap-theorem/spectral-rs?branch=main#9e5ed8ba132ff14dc342c5680e0a00c954c87bb6"
 dependencies = [
  "serde",
  "serde_json",

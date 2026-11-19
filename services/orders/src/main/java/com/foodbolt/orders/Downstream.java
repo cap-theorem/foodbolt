@@ -55,16 +55,16 @@ final class Downstream {
         this.json = json;
     }
 
-    Reply call(String requestId, String lookupName, String method, String path, Object body, Set<String> avoid)
+    Reply call(String requestId, String service, String method, String path, Object body, Set<String> avoid)
             throws Unavailable {
-        String service = baseName(lookupName);
         Provider provider;
         try {
-            provider = lookupAvoiding(lookupName, avoid);
+            provider = lookupAvoiding(service, avoid);
         } catch (SpectralException e) {
-            Log.warn("lookup failed", "service", lookupName, "error", e.getMessage(), "request_id", requestId);
-            throw new Unavailable("no instance of " + lookupName + ": " + e.getMessage(), null);
+            Log.warn("lookup failed", "service", service, "error", e.getMessage(), "request_id", requestId);
+            throw new Unavailable("no instance of " + service + ": " + e.getMessage(), null);
         }
+        String instance = instanceName(provider);
 
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(provider.endpoint() + path))
                 .timeout(Duration.ofSeconds(10))
@@ -85,16 +85,16 @@ final class Downstream {
         try {
             response = http.send(request.build(), HttpResponse.BodyHandlers.ofString());
         } catch (IOException e) {
-            Log.warn("call failed", "service", service, "instance", provider.instanceId(), "method", method, "path", path,
+            Log.warn("call failed", "service", service, "instance", instance, "method", method, "path", path,
                     "ms", elapsedMs(start), "error", e.toString(), "request_id", requestId);
-            throw new Unavailable(provider.instanceId() + " unreachable: " + e, provider.instanceId());
+            throw new Unavailable(instance + " unreachable: " + e, instance);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new Unavailable("interrupted", provider.instanceId());
+            throw new Unavailable("interrupted", instance);
         }
 
         int status = response.statusCode();
-        Object[] fields = {"service", service, "instance", provider.instanceId(), "method", method, "path", path,
+        Object[] fields = {"service", service, "instance", instance, "method", method, "path", path,
                 "status", status, "ms", elapsedMs(start), "request_id", requestId};
         if (status >= 500) {
             Log.warn("call", fields);
@@ -108,20 +108,31 @@ final class Downstream {
         } catch (IOException ignored) {
             node = null;
         }
-        return new Reply(status, node, response.body(), provider.instanceId());
+        return new Reply(status, node, response.body(), instance);
     }
 
-    private Provider lookupAvoiding(String lookupName, Set<String> avoid) {
-        Provider provider = spectral.lookup(lookupName);
-        for (int i = 1; i < MAX_LOOKUPS_TO_AVOID && avoid.contains(provider.instanceId()); i++) {
-            provider = spectral.lookup(lookupName);
+    private Provider lookupAvoiding(String service, Set<String> avoid) {
+        Provider provider = spectral.lookup(service);
+        for (int i = 1; i < MAX_LOOKUPS_TO_AVOID && avoid.contains(instanceName(provider)); i++) {
+            provider = spectral.lookup(service);
         }
         return provider;
     }
 
-    private static String baseName(String lookupName) {
-        int slash = lookupName.indexOf('/');
-        return slash < 0 ? lookupName : lookupName.substring(0, slash);
+    private static String instanceName(Provider provider) {
+        String instanceId = provider.instanceId();
+        if (instanceId != null && !instanceId.isEmpty()) {
+            return instanceId;
+        }
+        try {
+            String host = URI.create(provider.endpoint()).getHost();
+            if (host != null && !host.isEmpty()) {
+                return host;
+            }
+        } catch (IllegalArgumentException e) {
+            return provider.endpoint();
+        }
+        return provider.endpoint();
     }
 
     private static double elapsedMs(long startNanos) {

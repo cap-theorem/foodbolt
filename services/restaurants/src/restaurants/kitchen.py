@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from restaurants import logs
 from restaurants.downstream import CallError, Downstream
-from restaurants.identity import Identity, owner_of
+from restaurants.identity import Identity
 
 CALLBACK_ATTEMPTS = 3
 CALLBACK_BACKOFF_S = 1.0
@@ -128,7 +128,7 @@ class Kitchen:
             return True
 
     def _notify(self, ticket: Ticket, event: str, detail: str) -> None:
-        service = f"orders/{owner_of(ticket.order_id)}"
+        service = "orders"
         path = f"/v1/orders/{ticket.order_id}/events"
         body = {"event": event, "source": "restaurants", "detail": detail}
         for attempt in range(1, CALLBACK_ATTEMPTS + 1):
@@ -140,7 +140,20 @@ class Kitchen:
                     self.callbacks_ok += 1
                 return
             except CallError as err:
-                if err.status in (404, 409):
+                if err.status == 404:
+                    logs.warn(
+                        "order unknown to orders, dropping kitchen event",
+                        event=event,
+                        order_id=ticket.order_id,
+                        ticket_id=ticket.ticket_id,
+                        status=err.status,
+                        error=err.message,
+                        request_id=ticket.request_id,
+                    )
+                    with self._lock:
+                        self.callbacks_failed += 1
+                    return
+                if err.status == 409:
                     logs.warn(
                         "order rejected kitchen event, stopping",
                         event=event,

@@ -25,7 +25,7 @@
     <dependency>
       <groupId>com.github.cap-theorem</groupId>
       <artifactId>spectral-java</artifactId>
-      <version>v0.1.0</version>
+      <version>81b5193</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>

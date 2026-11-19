@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cap-theorem/spectral": "^0.1.0"
+    "@cap-theorem/spectral": "git+https://github.com/cap-theorem/spectral-js.git#9754d94"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

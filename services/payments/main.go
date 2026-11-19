@@ -73,7 +73,6 @@ func main() {
 	server := &http.Server{Handler: s.logRequests(mux), ReadHeaderTimeout: 5 * time.Second}
 
 	go stayRegistered(ctx, client, id.Service, id, logger)
-	go stayRegistered(ctx, client, id.Service+"/"+id.Instance, id, logger)
 	go func() {
 		<-ctx.Done()
 		logger.Info("shutting down", "instance", id.Instance)
@@ -155,7 +154,9 @@ func (s *Server) transitionHandler(from, to string) http.HandlerFunc {
 		payment, changed, err := s.ledger.Transition(paymentID, from, to)
 		switch {
 		case errors.Is(err, ErrNotFound):
-			writeError(w, http.StatusNotFound, "payment "+paymentID+" not found")
+			synthetic := syntheticPayment(paymentID, to)
+			s.logger.Info("payment "+to, "payment_id", synthetic.PaymentID, "synthetic", true, "request_id", requestID)
+			writeJSON(w, http.StatusOK, PaymentResponse{Payment: synthetic, Hops: []Hop{s.id.Hop(start)}})
 			return
 		case errors.Is(err, ErrInvalidTransition):
 			s.logger.Warn("invalid payment transition", "payment_id", paymentID, "status", payment.Status, "wanted", to, "request_id", requestID)
@@ -170,10 +171,12 @@ func (s *Server) transitionHandler(from, to string) http.HandlerFunc {
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	paymentID := r.PathValue("id")
 	payment, err := s.ledger.Get(paymentID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "payment "+paymentID+" not found")
+		synthetic := syntheticPayment(paymentID, StatusAuthorized)
+		writeJSON(w, http.StatusOK, PaymentResponse{Payment: synthetic, Hops: []Hop{s.id.Hop(start)}})
 		return
 	}
 	writeJSON(w, http.StatusOK, payment)

@@ -63,19 +63,14 @@ class Identity:
         return f"{self.instance}." + "".join(secrets.choice(BASE36) for _ in range(6))
 
 
-def owner_of(resource_id: str) -> str:
-    return resource_id.rsplit(".", 1)[0]
-
-
 def start_registration(client: Client, ident: Identity) -> threading.Event:
     stop = threading.Event()
-    for name in (ident.service, f"{ident.service}/{ident.instance}"):
-        threading.Thread(
-            target=stay_registered,
-            args=(client, ident, name, stop),
-            name=f"spectral-registration-{name}",
-            daemon=True,
-        ).start()
+    threading.Thread(
+        target=stay_registered,
+        args=(client, ident, ident.service, stop),
+        name=f"spectral-registration-{ident.service}",
+        daemon=True,
+    ).start()
     return stop
 
 

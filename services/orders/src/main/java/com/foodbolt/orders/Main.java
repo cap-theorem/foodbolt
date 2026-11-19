@@ -44,12 +44,10 @@ public final class Main {
         server.start();
         Log.info("listening", "service", id.service(), "instance", id.instance(), "port", id.port(), "endpoint", id.endpoint());
 
-        Thread shared = Registrar.start(spectral, id, id.service());
-        Thread own = Registrar.start(spectral, id, id.service() + "/" + id.instance());
+        Thread registration = Registrar.start(spectral, id, id.service());
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             Log.info("shutting down", "instance", id.instance());
-            shared.interrupt();
-            own.interrupt();
+            registration.interrupt();
             server.stop(2);
         }));
     }
@@ -115,10 +113,10 @@ public final class Main {
             String orderId = m.group(1);
             String action = m.group(2);
             if (action == null && method.equals("GET")) {
-                return orders.get(orderId);
+                return orders.get(orderId, requestId, start);
             }
             if ("/cancel".equals(action) && method.equals("POST")) {
-                return orders.cancel(orderId, requestId);
+                return orders.cancel(orderId, requestId, start);
             }
             if ("/events".equals(action) && method.equals("POST")) {
                 JsonNode body = readBody(ex);

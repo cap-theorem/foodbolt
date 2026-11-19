@@ -42,6 +42,7 @@ export class Downstream {
 
   async #attempt<T>(requestId: string, service: string, method: Method, path: string, body: unknown, avoid: string | undefined): Promise<Called<T>> {
     const provider = await this.#lookup(requestId, service, avoid);
+    const instance = instanceName(provider);
     const start = performance.now();
 
     let res: Response;
@@ -55,7 +56,7 @@ export class Downstream {
     } catch (err) {
       log("WARN", "call", {
         service,
-        instance: provider.instanceId,
+        instance,
         method,
         path,
         status: "unreachable",
@@ -63,13 +64,13 @@ export class Downstream {
         error: String(err),
         request_id: requestId,
       });
-      throw new CallError(service, 503, `${provider.instanceId} unreachable: ${String(err)}`, { instance: provider.instanceId });
+      throw new CallError(service, 503, `${instance} unreachable: ${String(err)}`, { instance });
     }
 
     const text = await res.text();
     log(res.status >= 500 ? "WARN" : "INFO", "call", {
       service,
-      instance: provider.instanceId,
+      instance,
       method,
       path,
       status: res.status,
@@ -86,10 +87,10 @@ export class Downstream {
 
     if (!res.ok) {
       const message = errorMessage(parsed) ?? text.slice(0, 4096);
-      throw new CallError(service, res.status, message, { ...(isObject(parsed) ? parsed : {}), instance: provider.instanceId });
+      throw new CallError(service, res.status, message, { ...(isObject(parsed) ? parsed : {}), instance });
     }
     if (parsed === undefined) {
-      throw new CallError(service, 502, `${provider.instanceId} returned invalid JSON`, { instance: provider.instanceId });
+      throw new CallError(service, 502, `${instance} returned invalid JSON`, { instance });
     }
     return { value: parsed as T, provider };
   }
@@ -110,7 +111,7 @@ export class Downstream {
         }
         throw err;
       }
-      if (provider.instanceId !== avoid) return provider;
+      if (instanceName(provider) !== avoid) return provider;
     }
     return provider!;
   }
@@ -139,6 +140,15 @@ function errorMessage(parsed: unknown): string | undefined {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function instanceName(provider: Provider): string {
+  if (provider.instanceId !== "") return provider.instanceId;
+  try {
+    return new URL(provider.endpoint).host;
+  } catch {
+    return provider.endpoint;
+  }
 }
 
 function elapsed(start: number): number {

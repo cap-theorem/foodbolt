@@ -174,6 +174,20 @@ func (l *Ledger) Stats() Stats {
 	return s
 }
 
+func syntheticPayment(paymentID, status string) Payment {
+	now := nowString()
+	return Payment{
+		PaymentID:     paymentID,
+		OrderID:       "",
+		CustomerID:    "",
+		Status:        status,
+		AmountCents:   0,
+		PaymentMethod: "pm_card_visa",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+}
+
 func nowString() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 }

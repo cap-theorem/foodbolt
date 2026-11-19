@@ -91,10 +91,6 @@ impl Identity {
     }
 }
 
-pub fn owner_of(id: &str) -> Option<&str> {
-    id.rfind('.').map(|i| &id[..i]).filter(|o| !o.is_empty())
-}
-
 pub fn spawn_registration(client: Client, ident: &Identity, service: String) {
     let registration = Registration {
         service,
