@@ -1,0 +1,66 @@
+name: foodbolt
+
+x-service: &service
+  restart: unless-stopped
+  depends_on: [spectral]
+
+x-env: &env
+  SPECTRAL_ADDR: http://spectral:8000
+  LEASE_TTL_SECONDS: "5"
+  TIME_SCALE: "0.5"
+
+services:
+  spectral:
+    build: dev/spectral-stub
+    image: foodbolt/spectral-stub:dev
+    ports: ["8000:8000"]
+
+  gateway:
+    <<: *service
+    build: services/gateway
+    image: foodbolt/gateway:dev
+    ports: ["8080:8080"]
+    environment:
+      <<: *env
+      MACHINE: box-1
+
+  orders:
+    <<: *service
+    build: services/orders
+    image: foodbolt/orders:dev
+    deploy:
+      replicas: 2
+    environment:
+      <<: *env
+      MACHINE: box-2
+
+  restaurants:
+    <<: *service
+    build: services/restaurants
+    image: foodbolt/restaurants:dev
+    deploy:
+      replicas: 2
+    environment:
+      <<: *env
+      MACHINE: box-3
+
+  payments:
+    <<: *service
+    build: services/payments
+    image: foodbolt/payments:dev
+    deploy:
+      replicas: 2
+    environment:
+      <<: *env
+      MACHINE: box-4
+
+  dispatch:
+    <<: *service
+    build: services/dispatch
+    image: foodbolt/dispatch:dev
+    deploy:
+      replicas: 2
+    environment:
+      <<: *env
+      MACHINE: box-5
+      COURIERS: "4"

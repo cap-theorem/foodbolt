@@ -1,0 +1,96 @@
+name: images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - '.github/workflows/images.yml'
+  pull_request:
+    paths:
+      - 'services/**'
+      - '.github/workflows/images.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: build ${{ matrix.service }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [gateway, orders, restaurants, payments, dispatch]
+        arch: [amd64, arm64]
+    env:
+      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+      IMAGE: ghcr.io/cap-theorem/foodbolt-${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: git
+        name: version
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - if: env.PUBLISH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=sha-${{ steps.git.outputs.short }}-${{ matrix.arch }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: services/${{ matrix.service }}
+          platforms: linux/${{ matrix.arch }}
+          push: ${{ env.PUBLISH == 'true' }}
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ matrix.arch }}
+
+  publish:
+    name: publish ${{ matrix.service }}
+    needs: build
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [gateway, orders, restaurants, payments, dispatch]
+    env:
+      IMAGE: ghcr.io/cap-theorem/foodbolt-${{ matrix.service }}
+    steps:
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: join architectures
+        run: |
+          short="${GITHUB_SHA::7}"
+          docker buildx imagetools create \
+            --tag "$IMAGE:sha-$short" \
+            --tag "$IMAGE:main" \
+            "$IMAGE:sha-$short-amd64" \
+            "$IMAGE:sha-$short-arm64"
+          docker buildx imagetools inspect "$IMAGE:main"

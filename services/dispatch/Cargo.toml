@@ -1,0 +1,17 @@
+[package]
+name = "foodbolt-dispatch"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "dispatch"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+spectral-sdk = { git = "https://github.com/cap-theorem/spectral-rs", branch = "main" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
+ureq = { version = "3", default-features = false, features = ["json"] }
